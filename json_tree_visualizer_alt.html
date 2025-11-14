@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>JSON Syntax Tree Visualizer</title>
+    <style>
+        :root{--bg:#0f1724;--panel:#0b1220;--muted:#94a3b8;--accent:#60a5fa;--node-bg:#111827}
+        html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
+        body{background:linear-gradient(180deg,#071025 0%, #07162a 100%);color:#e6eef8}
+        .app{display:grid;grid-template-columns:min-content 1fr;height:100vh;gap:16px;padding:16px}
+        .panel{background:var(--panel);border-radius:12px;padding:16px;box-shadow:0 6px 20px rgba(2,6,23,.6);overflow:auto}
+        .aside-collapsed aside{display:none}
+        .aside-collapsed{grid-template-columns:1fr}
+        .toggle-aside{position:absolute;top:16px;left:16px;background:linear-gradient(180deg,var(--accent),#3b82f6);color:white;padding:8px;border-radius:8px;border:0;cursor:pointer;z-index:10}
+        h1{font-size:18px;margin:0 0 12px}
+        label{display:block;font-size:12px;color:var(--muted);margin-top:8px}
+        textarea{width:100%;height:240px;background:#05070a;border:1px solid rgba(255,255,255,.04);color:#dbeafe;padding:8px;border-radius:8px;font-family:monospace;font-size:13px}
+        input[type=file]{color:var(--muted)}
+        button{background:linear-gradient(180deg,var(--accent),#3b82f6);color:white;padding:8px 12px;border-radius:8px;border:0;margin-top:8px;cursor:pointer}
+        .controls{display:flex;gap:8px;flex-wrap:wrap}
+        .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        .legend > div{display:flex;gap:6px;align-items:center;font-size:13px}
+        .color-box{width:14px;height:14px;border-radius:4px}
+        #vis-wrap{background:transparent;border-radius:12px;overflow:hidden;position:relative}
+        svg{width:100%;height:100%}
+        .node rect{stroke:#0b1220;stroke-width:1}
+        .tooltip{position:absolute;padding:6px 8px;background:rgba(2,6,23,.9);border:1px solid rgba(255,255,255,.04);border-radius:6px;font-size:12px;pointer-events:none;white-space:pre}
+        .footer{font-size:13px;color:var(--muted);margin-top:12px}
+        .small{font-size:12px;color:var(--muted)}
+    </style>
+</head>
+<body>
+<div class="app">
+    <button class="toggle-aside" id="toggle-aside">Toggle Panel</button>
+    <aside class="panel">
+        <h1>JSON Syntax Tree Visualizer</h1>
+        <div class="small">Paste JSON into the box below or load a .json file. The visualizer expects a tree-like structure (nodes with <code>left</code> and <code>right</code> children). The example you provided is pre-loaded.</div>
+
+        <label for="file">Load .json file</label>
+        <input id="file" type="file" accept="application/json" />
+
+        <label for="json">JSON input</label>
+        <textarea id="json"></textarea>
+
+        <div class="controls">
+            <button id="load">Load & Render</button>
+            <button id="expand">Expand all</button>
+            <button id="collapse">Collapse all</button>
+            <button id="export">Export PNG</button>
+            <button id="export_svg">Export SVG</button>
+        </div>
+
+        <div class="legend">
+            <div><span class="color-box" style="background:#60a5fa"></span> operator</div>
+            <div><span class="color-box" style="background:#34d399"></span> literal</div>
+            <div><span class="color-box" style="background:#f472b6"></span> heuristic</div>
+        </div>
+
+        <div class="footer">Usage tips: click nodes to toggle children. Drag to pan, scroll to zoom.</div>
+    </aside>
+
+    <main id="vis-wrap" class="panel" style="padding:0">
+        <div id="svg-container" style="width:100%;height:100%;background:linear-gradient(180deg,transparent,rgba(255,255,255,0.02))">
+            <svg id="svg"></svg>
+        </div>
+        <div id="tooltip" class="tooltip" style="display:none"></div>
+    </main>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+    const defaultJSON = `{
+  "tree": {
+    "type": "operator",
+    "value": "+",
+    "left": {
+      "type": "heuristic",
+      "value": "remaining_capacity",
+      "left": null,
+      "right": null
+    },
+    "right": {
+      "type": "operator",
+      "value": "+",
+      "left": {
+        "type": "heuristic",
+        "value": "distance",
+        "left": null,
+        "right": null
+      },
+      "right": {
+        "type": "operator",
+        "value": "/",
+        "left": {
+          "type": "heuristic",
+          "value": "demand",
+          "left": null,
+          "right": null
+        },
+        "right": {
+          "type": "operator",
+          "value": "-",
+          "left": {
+            "type": "operator",
+            "value": "*",
+            "left": {
+              "type": "heuristic",
+              "value": "distance",
+              "left": null,
+              "right": null
+            },
+            "right": {
+              "type": "operator",
+              "value": "+",
+              "left": {
+                "type": "operator",
+                "value": "-",
+                "left": {
+                  "type": "literal",
+                  "value": 0.2,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "type": "literal",
+                  "value": 0.6,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "type": "operator",
+                "value": "+",
+                "left": {
+                  "type": "operator",
+                  "value": "*",
+                  "left": {
+                    "type": "literal",
+                    "value": 0.8,
+                    "left": null,
+                    "right": null
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": 0.8,
+                    "left": null,
+                    "right": null
+                  }
+                },
+                "right": {
+                  "type": "literal",
+                  "value": 0.3,
+                  "left": null,
+                  "right": null
+                }
+              }
+            }
+          },
+          "right": {
+            "type": "operator",
+            "value": "*",
+            "left": {
+              "type": "operator",
+              "value": "+",
+              "left": {
+                "type": "operator",
+                "value": "*",
+                "left": {
+                  "type": "operator",
+                  "value": "+",
+                  "left": {
+                    "type": "heuristic",
+                    "value": "demand",
+                    "left": null,
+                    "right": null
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": 0.9,
+                    "left": null,
+                    "right": null
+                  }
+                },
+                "right": {
+                  "type": "heuristic",
+                  "value": "demand",
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "type": "heuristic",
+                "value": "demand",
+                "left": null,
+                "right": null
+              }
+            },
+            "right": {
+              "type": "operator",
+              "value": "/",
+              "left": {
+                "type": "heuristic",
+                "value": "demand",
+                "left": null,
+                "right": null
+              },
+              "right": {
+                "type": "operator",
+                "value": "+",
+                "left": {
+                  "type": "operator",
+                  "value": "/",
+                  "left": {
+                    "type": "literal",
+                    "value": 0.3,
+                    "left": null,
+                    "right": null
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": 0.9,
+                    "left": null,
+                    "right": null
+                  }
+                },
+                "right": {
+                  "type": "operator",
+                  "value": "-",
+                  "left": {
+                    "type": "heuristic",
+                    "value": "remaining_capacity",
+                    "left": null,
+                    "right": null
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": 0.5,
+                    "left": null,
+                    "right": null
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "individual": {
+    "routes": [
+      [
+        2,
+        1,
+        0
+      ],
+      [
+        4,
+        3,
+        0
+      ]
+    ],
+    "fitness": 19.404918347287662
+  }
+}`;
+
+    const jsonTextarea = document.getElementById('json');
+    const fileInput = document.getElementById('file');
+    const loadBtn = document.getElementById('load');
+    const expandBtn = document.getElementById('expand');
+    const collapseBtn = document.getElementById('collapse');
+    const exportBtn = document.getElementById('export');
+    const exportSvgBtn = document.getElementById('export_svg');
+    const tooltip = document.getElementById('tooltip');
+    const toggleAside = document.getElementById('toggle-aside');
+    const app = document.querySelector('.app');
+
+    jsonTextarea.value = defaultJSON;
+
+    toggleAside.addEventListener('click', () => {
+        app.classList.toggle('aside-collapsed');
+    });
+
+    fileInput.addEventListener('change', e => {
+        const f = e.target.files[0];
+        if(!f) return;
+        const r = new FileReader();
+        r.onload = () => { jsonTextarea.value = r.result; renderFromText(); };
+        r.readAsText(f);
+    });
+
+    loadBtn.addEventListener('click', renderFromText);
+    expandBtn.addEventListener('click', () => { if(treeRoot) expandAll(treeRoot); update(treeRoot); });
+    collapseBtn.addEventListener('click', () => { if(treeRoot) collapseAll(treeRoot); update(treeRoot); });
+    exportBtn.addEventListener('click', exportPNG);
+    exportSvgBtn.addEventListener('click', exportSVG);
+
+    let treeRoot = null;
+    const svg = d3.select('#svg');
+    const width = document.getElementById('svg-container').clientWidth;
+    const height = document.getElementById('svg-container').clientHeight;
+
+    const g = svg.append('g');
+
+    const zoom = d3.zoom().scaleExtent([0.1, 3]).on('zoom', (event) => g.attr('transform', event.transform));
+    svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(40,40).scale(1));
+
+    const treeLayout = d3.tree().nodeSize([150, 40]);
+
+    function countNodes(node) {
+        if (!node) return 0;
+        let left = countNodes(node.left);
+        let right = countNodes(node.right);
+        return 1 + left + right;
+    }
+
+    function convertToD3(node, depth = 0){
+        if(!node) return null;
+        const totalNodes = countNodes(node);
+        const d = {
+            name: node.value !== undefined ? String(node.value) : '',
+            type: node.type || 'unknown',
+            raw: node,
+            depth: depth,
+            totalNodes: totalNodes
+        };
+        d.children = [];
+        if(node.left) d.children.push(convertToD3(node.left, depth + 1));
+        if(node.right) d.children.push(convertToD3(node.right, depth + 1));
+        if(d.children.length===0) delete d.children;
+        return d;
+    }
+
+    function renderFromText(){
+        let parsed;
+        try{ parsed = JSON.parse(jsonTextarea.value); }
+        catch(err){ alert('Invalid JSON: ' + err.message); return; }
+
+        const rootNode = parsed.tree || parsed;
+        const d3root = d3.hierarchy(convertToD3(rootNode));
+        d3root.x0 = 0; d3root.y0 = 0;
+        treeRoot = d3root;
+        collapseAll(d3root);
+        update(d3root);
+    }
+
+    function update(source){
+        const root = treeLayout(treeRoot);
+        const nodes = root.descendants();
+        const links = root.links();
+
+        nodes.forEach(d => d.y = d.depth * 50);
+
+        const linkSel = g.selectAll('path.link').data(links, d => d.target.data.raw ? Math.random() : Math.random());
+        linkSel.join(
+            enter => enter.append('path').attr('class','link').attr('fill','none').attr('stroke','rgba(255,255,255,0.2)').attr('stroke-width',2)
+                .attr('d', d => diagonal(d)),
+            update => update.transition().duration(300).attr('d', d => diagonal(d)),
+            exit => exit.remove()
+        );
+
+        const nodeSel = g.selectAll('g.node').data(nodes, d => d.id || (d.id = ++i));
+
+        const nodeEnter = nodeSel.enter().append('g').attr('class','node').attr('transform', d => `translate(${source.x0},${source.y0})`).style('cursor','pointer')
+            .on('click', (event,d) => { if(d.children) { d._children = d.children; d.children = null; } else { d.children = d._children; d._children = null; } update(d); })
+            .on('mouseover', (event,d) => {
+                tooltip.style.display = 'block';
+                tooltip.innerText = (d.data.raw && d.data.raw.value !== undefined) ? String(d.data.raw.value) : (d.data.type || '');
+            })
+            .on('mousemove', (event) => {
+                const container = document.getElementById('svg-container');
+                const rect = container.getBoundingClientRect();
+                tooltip.style.left = (event.clientX - rect.left + 12) + 'px';
+                tooltip.style.top = (event.clientY - rect.top + 12) + 'px';
+            })
+            .on('mouseout', () => { tooltip.style.display = 'none'; });
+
+        nodeEnter.append('rect').attr('width',130).attr('height',32).attr('rx',8).attr('ry',8).attr('x',-70).attr('y',-18)
+            .attr('fill', d => colorForType(d.data.type));
+
+        nodeEnter.append('text').attr('dy',4).attr('x',-62).style('font-size','13px').style('font-family','Inter,Segoe UI,mono')
+            .text(d => (d.data.raw && d.data.raw.value !== undefined) ? String(d.data.raw.value) : '')
+            .each(function(d){ wrapText(this, 120); });
+
+        // Show depth + node count below value
+        nodeEnter.append('text')
+            .attr('dy',14).attr('x',-62)
+            .style('font-size','11px').style('fill','#94a3b8')
+            .text(d => `d:${d.data.depth} n:${d.data.totalNodes}`);
+
+        const nodeUpdate = nodeEnter.merge(nodeSel);
+        nodeUpdate.transition().duration(300).attr('transform', d => `translate(${d.x},${d.y})`);
+
+        nodeSel.exit().transition().duration(200).attr('transform', d => `translate(${source.x},${source.y})`).remove();
+
+        nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+    }
+
+    function diagonal(d){
+        return `M ${d.source.x} ${d.source.y}
+              C ${d.source.x} ${(d.source.y + d.target.y) / 2}, ${d.target.x} ${(d.source.y + d.target.y) / 2}, ${d.target.x} ${d.target.y}`;
+    }
+
+    function colorForType(t){
+        if(!t) return '#475569';
+        if(t.includes('operator')) return '#60a5fa';
+        if(t.includes('literal')) return '#34d399';
+        if(t.includes('heuristic')) return '#f472b6';
+        return '#94a3b8';
+    }
+
+    function wrapText(textNode, width){
+        const text = d3.select(textNode);
+        const words = text.text().split(/\s+/).reverse();
+        let word, line = [], lineNumber = 0, lineHeight = 1.1, y = text.attr('y') || 0, tspan = text.text(null).append('tspan').attr('x',-62).attr('y',y).attr('dy',0 + 'em');
+        while (word = words.pop()){
+            line.push(word);
+            tspan.text(line.join(' '));
+            if (tspan.node().getComputedTextLength() > width){
+                line.pop(); tspan.text(line.join(' '));
+                line = [word];
+                tspan = text.append('tspan').attr('x',-62).attr('y',y).attr('dy',++lineNumber * lineHeight + 'em').text(word);
+            }
+        }
+    }
+
+    function collapseAll(d){
+        if(d.children){ d.children.forEach(c => collapseAll(c)); d._children = d.children; d.children = null; }
+    }
+    function expandAll(d){
+        if(d._children){ d.children = d._children; d._children = null; }
+        if(d.children) d.children.forEach(c => expandAll(c));
+    }
+
+    let i = 0;
+    renderFromText();
+
+    function exportPNG(){
+        const svgEl = document.querySelector('#svg');
+        const serializer = new XMLSerializer();
+        const str = serializer.serializeToString(svgEl);
+        const blob = new Blob([str], {type: 'image/svg+xml;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = svgEl.clientWidth * 2; canvas.height = svgEl.clientHeight * 2;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#071025'; ctx.fillRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            const a = document.createElement('a');
+            a.download = 'tree.png';
+            a.href = canvas.toDataURL('image/png');
+            a.click();
+        };
+        img.src = url;
+    }
+    function exportSVG() {
+        const svgEl = document.querySelector('#svg');
+        const serializer = new XMLSerializer();
+
+        // Clone so we can safely modify
+        const clone = svgEl.cloneNode(true);
+
+        // Ensure xmlns attributes are present
+        if (!clone.getAttribute('xmlns')) {
+            clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        }
+        if (!clone.getAttribute('xmlns:xlink')) {
+            clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+        }
+
+        // Add background rect so shapes are visible in viewers with white background
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        bg.setAttribute('x', '0');
+        bg.setAttribute('y', '0');
+        bg.setAttribute('width', '100%');
+        bg.setAttribute('height', '100%');
+        bg.setAttribute('fill', '#071025'); // same as PNG background
+        clone.insertBefore(bg, clone.firstChild);
+
+        // Serialize
+        const str = serializer.serializeToString(clone);
+
+        // Add XML declaration
+        const svgBlob = new Blob(
+            ['<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n', str],
+            { type: 'image/svg+xml;charset=utf-8' }
+        );
+
+        const url = URL.createObjectURL(svgBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'tree.svg';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+</script>
+</body>
+</html>
